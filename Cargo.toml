@@ -4,3 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+iron = "0.6.1"
+duckdb = {version = "0.10.2", features = ["bundled"]}
+
+
+
+arrow = { version = "*", default-features = false, features = ["prettyprint"] }
