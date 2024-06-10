@@ -11,7 +11,7 @@ tokio-tungstenite = "0.23.0"
 futures-util = "0.3.30"
 
 iron = "0.6.1"
-# duckdb = {version = "0.10.2", features = ["bundled"]}
+duckdb = {version = "0.10.2", features = ["bundled"]}
 router = "0.6.0"
 logger = "0.4.0"
 urlencoded = "0.6.0"

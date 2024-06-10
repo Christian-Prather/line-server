@@ -1,5 +1,5 @@
-// use duckdb::arrow::util::pretty::print_batches;
-// use duckdb::{params, Connection, Result};
+use duckdb::arrow::util::pretty::print_batches;
+use duckdb::{params, Connection, Result as dbResult};
 
 // Web app section
 // Based on Hyper, was going to use that until I realized it was used in iron
@@ -18,13 +18,13 @@ use std::fs::read_to_string;
 
 use tokio_tungstenite::{
     accept_async,
-    tungstenite::{Error, Message, Result},
+    tungstenite::{Error as TError, Message, Result},
 };
 
 use iron::prelude::*;
 use iron::status;
 // use router::Router;
-use futures_util::{future, SinkExt, StreamExt, TryStreamExt};
+use futures_util::{future, stream::SplitSink, SinkExt, StreamExt, TryStreamExt};
 use tokio::net::{TcpListener, TcpStream};
 
 #[derive(Debug)]
@@ -43,68 +43,92 @@ fn read_lines(filename: &str) -> Vec<String> {
 }
 
 /// Function responsible for building the database
-// fn build_database() -> Result<()> {
-//     let conn = Connection::open_in_memory()?;
+fn build_database() -> dbResult<Connection> {
+    let conn = Connection::open_in_memory()?;
 
-//     conn.execute_batch(
-//         r"CREATE SEQUENCE seq;
-//           CREATE TABLE line (
-//                   id              INTEGER PRIMARY KEY DEFAULT NEXTVAL('seq'),
-//                   data            TEXT NOT NULL,
-//                   );
-//         ",
-//     )?;
+    conn.execute_batch(
+        r"CREATE SEQUENCE seq;
+          CREATE TABLE document (
+                  id              INTEGER PRIMARY KEY DEFAULT NEXTVAL('seq'),
+                  data            TEXT NOT NULL,
+                  );
+        ",
+    )?;
 
-//     let lines = read_lines("test_file.txt");
-//     for line in lines {
-//         println!("{}", line);
-//         conn.execute("INSERT INTO line (data) VALUES (?)", params![line])?;
-//     }
+    let lines = read_lines("test_file.txt");
+    for line in lines {
+        println!("{}", line);
+        conn.execute("INSERT INTO document (data) VALUES (?)", params![line])?;
+    }
 
-//     let mut stmt = conn.prepare("SELECT id, data FROM line")?;
-//     let line_iter = stmt.query_map([], |row| {
-//         Ok(Line {
-//             id: row.get(0)?,
-//             data: row.get(1)?,
-//         })
-//     })?;
+    // Uncomment for seeing if file was added to DB correctly
+    let mut stmt = conn.prepare("SELECT id, data FROM document")?;
+    let line_iter = stmt.query_map([], |row| {
+        Ok(Line {
+            id: row.get(0)?,
+            data: row.get(1)?,
+        })
+    })?;
 
-//     for line in line_iter {
-//         let l = line.unwrap();
-//         println!("ID: {}", l.id);
-//         println!("Found line {:?}", l.data);
-//     }
+    for line in line_iter {
+        let l = line.unwrap();
+        println!("ID: {}", l.id);
+        println!("Found line {:?}", l.data);
+    }
 
-//     Ok(())
-// }
+    Ok(conn)
+}
 
 /// Function responsible for preprocessing the file and loading it into the duckdb database
-// fn preprocess_file() {
+// fn make_database() {
 //     // TODO: Wrap in timing metrics.
 //     // Does rust have something built in for that?
 //     // Does rust have a built in profiler / tracer as well?
-//     let _ = build_database();
+//     let database = build_database().unwrap();
 // }
 
 /// Function responsible for getting a specific line from the database
-fn get_line(request: &mut Request) -> IronResult<Response> {
-    let mut response = Response::new();
-    response.set_mut(status::Ok);
-    // response.set_mut(format!("Line is: {}\n", line));
+// fn get_line(request: &mut Request) -> IronResult<Response> {
+//     let mut response = Response::new();
+//     response.set_mut(status::Ok);
+//     // response.set_mut(format!("Line is: {}\n", line));
 
-    Ok(response)
+//     Ok(response)
+// }
+
+// fn setup_server() {
+//     // let mut router = Router::new();
+//     // router.get("/", get_line, "root");
+//     // // router.("/gcd", post_gcd, "gcd");
+
+//     // println!("Serving on http://localhost:3000.");
+//     // Iron::new(router).http("localhost:3000.").unwrap();
+// }
+
+fn get_line(line: i32, conn: &Connection) -> dbResult<Line> {
+    let text: String = conn.query_row(
+        "SELECT data FROM document WHERE id = (?)",
+        params![line],
+        |row| row.get(0),
+    )?;
+
+    println!("TEXT: {}", text);
+
+    let data = Line {
+        id: line,
+        data: text.to_string(),
+    };
+
+    Ok(data)
+
+    // for line in line_iter {
+    //     let l = line.unwrap();
+    //     println!("ID: {}", l.id);
+    //     println!("Found line {:?}", l.data);
+    // }
 }
 
-fn setup_server() {
-    // let mut router = Router::new();
-    // router.get("/", get_line, "root");
-    // // router.("/gcd", post_gcd, "gcd");
-
-    // println!("Serving on http://localhost:3000.");
-    // Iron::new(router).http("localhost:3000.").unwrap();
-}
-
-async fn accept_connection(stream: TcpStream) -> Result<()> {
+async fn accept_connection(stream: TcpStream, db: Connection) -> Result<()> {
     let device_id = stream
         .peer_addr()
         .expect("Connection to peer device failed");
@@ -119,10 +143,21 @@ async fn accept_connection(stream: TcpStream) -> Result<()> {
 
     while let Some(msg) = read.next().await {
         let msg = msg?;
-        let mut send_message = Message::Text("".to_string());
+
         if msg.is_text() || msg.is_binary() {
+            let mut send_message = Message::Text("".to_string());
+            let command: Vec<&str> = msg.to_text().unwrap().split(" ").collect();
             // Check for the API specific features
-            match msg.to_text().unwrap() {
+            match command[0] {
+                "GET" => {
+                    // TODO: clp handle the error if no page number is provided
+                    send_message = Message::Text(format!("Reading {}", command[1]));
+                    write.send(send_message).await?;
+
+                    let line = get_line(command[1].parse().expect("Not valid line number"), &db);
+                    send_message = Message::Text(line.unwrap().data);
+                    write.send(send_message).await?;
+                }
                 "QUIT" => {
                     send_message = Message::Text("Quiting".to_string());
                     write.send(send_message).await?;
@@ -148,20 +183,29 @@ async fn accept_connection(stream: TcpStream) -> Result<()> {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Error> {
-    // preprocess_file();
+async fn main() -> Result<(), TError> {
+    // try_clone()
+    let db = build_database().unwrap();
+
+    let test = get_line(2, &db);
+
+    println!("TEST: {}", test.unwrap().data);
+
     let address = "localhost:10497";
     let socket = TcpListener::bind(&address).await;
     let listener = socket.expect("Failed to connect");
     println!("Serving on: {}", address);
 
     while let Ok((stream, _)) = listener.accept().await {
-        tokio::spawn(accept_connection(stream));
+        tokio::spawn(accept_connection(
+            stream,
+            db.try_clone()
+                .expect("Cant clone db connection, you're silly"),
+        ));
     }
 
     Ok(())
 
-    // setup_server();
     // let mut router = Router::new();
     // router.get("/:line", get_line, "line");
     // // router.("/gcd", post_gcd, "gcd");
