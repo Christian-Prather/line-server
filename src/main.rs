@@ -14,12 +14,17 @@ extern crate urlencoded;
 
 use std::fs::read_to_string;
 
-use std::{env, io::Error};
+// use std::{env, io::Error};
+
+use tokio_tungstenite::{
+    accept_async,
+    tungstenite::{Error, Message, Result},
+};
 
 use iron::prelude::*;
 use iron::status;
 // use router::Router;
-use futures_util::{future, StreamExt, TryStreamExt};
+use futures_util::{future, SinkExt, StreamExt, TryStreamExt};
 use tokio::net::{TcpListener, TcpStream};
 
 #[derive(Debug)]
@@ -99,7 +104,7 @@ fn setup_server() {
     // Iron::new(router).http("localhost:3000.").unwrap();
 }
 
-async fn accept_connection(stream: TcpStream) {
+async fn accept_connection(stream: TcpStream) -> Result<()> {
     let device_id = stream
         .peer_addr()
         .expect("Connection to peer device failed");
@@ -110,13 +115,36 @@ async fn accept_connection(stream: TcpStream) {
         .expect("Error in websocket connection");
     println!("New socket connection with: {}", device_id);
 
-    let (write, read) = ws.split();
+    let (mut write, mut read) = ws.split();
 
-    let mut msg = "";
-    read.try_filter(|msg| future::ready(msg.is_text() || msg.is_binary()))
-        .forward(write)
-        .await
-        .expect("Failed to forward messages")
+    while let Some(msg) = read.next().await {
+        let msg = msg?;
+        let mut send_message = Message::Text("".to_string());
+        if msg.is_text() || msg.is_binary() {
+            // Check for the API specific features
+            match msg.to_text().unwrap() {
+                "QUIT" => {
+                    send_message = Message::Text("Quiting".to_string());
+                    write.send(send_message).await?;
+                }
+                "SHUTDOWN" => {
+                    send_message = Message::Text("Shuting down".to_string());
+                    write.send(send_message).await?;
+                }
+                _ => println!("Else"),
+            }
+
+            // write.send(msg).await?;
+        }
+    }
+
+    Ok(())
+
+    // let mut msg = "";
+    // read.try_filter(|msg| future::ready(msg.is_text() || msg.is_binary()))
+    //     .forward(write)
+    //     .await
+    //     .expect("Failed to forward messages")
 }
 
 #[tokio::main]
