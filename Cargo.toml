@@ -6,15 +6,14 @@ edition = "2021"
 [dependencies]
 # Websocket libraries
 tokio = {version = "1.38.0", features = ["full"]}
-# websocket = "0.27.1"
 tokio-tungstenite = "0.23.0"
 futures-util = "0.3.30"
 
-iron = "0.6.1"
+# Database 
 duckdb = {version = "0.10.2", features = ["bundled"]}
-router = "0.6.0"
-logger = "0.4.0"
-urlencoded = "0.6.0"
 
+# Progress bar
+zzz = "0.3.1"
 
-arrow = { version = "*", default-features = false, features = ["prettyprint"] }
+# Logging 
+spdlog-rs = "0.3.13"
