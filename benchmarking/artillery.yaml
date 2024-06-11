@@ -1,0 +1,31 @@
+config:
+  target: 'ws://localhost:10497/'
+  phases:
+    - duration: 5
+      arrivalRate: 1
+      rampTo: 5
+      name: Warm up phase
+    - duration: 5
+      arrivalRate: 5
+      rampTo: 10
+      name: Ramp up load
+    - duration: 10
+      arrivalRate: 10
+      rampTo: 1000
+      name: Spike phase
+  # Load & configure a couple of useful plugins
+  # https://docs.art/reference/extensions
+  plugins:
+    ensure: {}
+    apdex: {}
+    metrics-by-endpoint: {}
+scenarios:
+  - name: 'get_line'
+    engine: ws
+    flow:
+      - loop:
+        - send: 'GET 100'
+        capture:
+          - json: "$.responseTime"
+            as: "responseTime"
+        count: 100
